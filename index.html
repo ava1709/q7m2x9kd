@@ -172,7 +172,12 @@
     const p = new URLSearchParams(location.hash.slice(1));
     let bytes = null;
     if (p.get("v") === "1" && p.get("d")) {
-      try { bytes = await inflate(p.get("d")); } catch (e) { bytes = null; }
+      if (p.get("n") && Number(p.get("n")) !== rows.length) {
+        // список АЗС у бота и у страницы разный — данные легли бы не на те АЗС: лучше честное демо
+        note("Список АЗС обновился — данные недоступны, пока страницу не обновят. Показываю демо.");
+      } else {
+        try { bytes = await inflate(p.get("d")); } catch (e) { bytes = null; }
+      }
     }
     DATA.demo = !bytes;
     DATA.at = bytes && Number(p.get("t")) ? Number(p.get("t")) * 1000 : Date.now();
