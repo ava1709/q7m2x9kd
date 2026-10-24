@@ -1,0 +1,399 @@
+<!doctype html>
+<!-- Карта АЗС — Mini App для Telegram (прототип). Где за последние 30 минут были успешные онлайн-заправки
+     выбранным топливом. Данные: window.AZS_DATA (сейчас — demo-data.js; в рабочей версии — API сервиса на сервере).
+     Карта — Яндекс.Карты 2.1 (для рабочей версии нужен ключ: &apikey=…). В Telegram — тема и геопозиция Telegram,
+     в браузере — геопозиция браузера. Цвета: зелёный ≤ 30 мин, жёлтый — до суток, серый — больше суток или нет топлива. -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Карта АЗС</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&amp;apikey=47ec3f3e-8bd7-4c03-a385-fef0ee84bbbf"></script>
+<style>
+  :root {
+    --bg: #ffffff; --text: #16201b; --text-2: #4b5852; --text-3: #7d8984; --line: rgba(22, 32, 27, .1);
+    --surface: rgba(255, 255, 255, .96); --chip: #f1f4f2; --chip-on: #12865a; --chip-on-text: #ffffff;
+    --ok: #12a160; --warn: #e2a500; --off: #9aa5a0; --accent: #12865a; --shadow: 0 6px 24px rgba(16, 32, 24, .14);
+    --r: 16px; --font: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  html[data-theme="dark"] {
+    --bg: #17191c; --text: #eef2f0; --text-2: #b9c2be; --text-3: #8b9590; --line: rgba(255, 255, 255, .1);
+    --surface: rgba(30, 33, 36, .96); --chip: #262a2e; --shadow: 0 6px 24px rgba(0, 0, 0, .45);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.35 var(--font);
+    -webkit-font-smoothing: antialiased; overflow: hidden; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  #map { position: fixed; inset: 0; }
+
+  /* верх: заголовок и топливо */
+  .top { position: fixed; z-index: 10; left: 0; right: 0; top: 0; padding: 10px 12px 0;
+    padding-top: max(10px, env(safe-area-inset-top)); pointer-events: none; }
+  .bar { pointer-events: auto; background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow);
+    padding: 10px 12px 10px; backdrop-filter: blur(8px); max-width: 720px; margin: 0 auto; }
+  .bar__row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .bar__title { font-weight: 750; font-size: 16px; }
+  .bar__meta { font-size: 12.5px; color: var(--text-3); white-space: nowrap; }
+  .demo.demo--stale { background: #fdf0c8; color: #8a6200; }
+  .demo { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--text-2);
+    font-size: 11.5px; font-weight: 650; }
+  .chips { display: flex; gap: 6px; margin: 9px -12px 0; padding: 0 12px 2px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; border: 0; border-radius: 999px; padding: 7px 13px; background: var(--chip); font-size: 14px;
+    font-weight: 650; color: var(--text-2); transition: background .15s, color .15s; }
+  .chip.is-on { background: var(--chip-on); color: var(--chip-on-text); }
+
+  /* значок АЗС на карте */
+  .pin { position: relative; transform: translate(-50%, -100%); display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 8px 4px 5px; border-radius: 999px; background: #fff; box-shadow: 0 2px 8px rgba(16, 32, 24, .25);
+    font: 700 12px/1 var(--font); color: #16201b; white-space: nowrap; border: 2px solid var(--c); }
+  .pin::after { content: ""; position: absolute; left: 50%; bottom: -7px; width: 10px; height: 10px; margin-left: -5px;
+    background: #fff; border-right: 2px solid var(--c); border-bottom: 2px solid var(--c); transform: rotate(45deg); }
+  .pin__dot { width: 14px; height: 14px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 3px #fff; }
+  .pin--ok { --c: var(--ok); } .pin--warn { --c: var(--warn); } .pin--off { --c: var(--off); color: #6b7570; }
+  .pin--best { box-shadow: 0 0 0 4px rgba(18, 161, 96, .28), 0 2px 8px rgba(16, 32, 24, .25); }
+  .me { width: 18px; height: 18px; transform: translate(-50%, -50%); border-radius: 50%; background: #2f7cf6;
+    border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(47, 124, 246, .22), 0 1px 4px rgba(0, 0, 0, .3); }
+
+  /* легенда — строкой под топливом; кнопка «моё место» */
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--text-3); }
+  .legend__note { flex-basis: 100%; color: var(--text-3); opacity: .85; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+  .locate { position: fixed; z-index: 10; right: 12px; bottom: calc(var(--sheet, 0px) + 12px + env(safe-area-inset-bottom));
+    width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--surface); box-shadow: var(--shadow);
+    display: grid; place-items: center; transition: bottom .2s; }
+  .locate svg { width: 20px; height: 20px; fill: none; stroke: var(--accent); stroke-width: 2.2; }
+
+  /* нижняя карточка: ближайшая или выбранная АЗС */
+  .sheet { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; padding: 0 12px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom)); transform: translateY(110%); transition: transform .22s ease; }
+  .sheet.is-open { transform: none; }
+  .card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 14px 14px 12px;
+    max-width: 720px; margin: 0 auto; }
+  .card__head { display: flex; align-items: flex-start; gap: 10px; }
+  .card__kicker { font-size: 12px; font-weight: 700; color: var(--ok); text-transform: uppercase; letter-spacing: .04em; }
+  .card__num { font-size: 18px; font-weight: 800; }
+  .card__addr { color: var(--text-2); font-size: 13.5px; margin-top: 2px; }
+  .card__dist { margin-left: auto; text-align: right; white-space: nowrap; font-weight: 700; }
+  .card__dist small { display: block; color: var(--text-3); font-weight: 600; font-size: 12px; }
+  .card__close { border: 0; background: var(--chip); border-radius: 50%; width: 28px; height: 28px; flex: none;
+    color: var(--text-3); font-size: 16px; line-height: 1; }
+  .rows { margin: 10px 0 12px; display: grid; gap: 6px; }
+  .r { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .r i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .r b { font-weight: 650; }
+  .r span { margin-left: auto; color: var(--text-2); font-size: 13.5px; }
+  .actions { display: flex; gap: 8px; }
+  .btn { flex: 1; border: 0; border-radius: 12px; padding: 12px 10px; font-weight: 700; background: var(--chip); }
+  .btn--main { background: var(--accent); color: #fff; }
+  .hint { color: var(--text-3); font-size: 12px; margin: 8px 2px 0; }
+  .ok { background: var(--ok); } .warn { background: var(--warn); } .off { background: var(--off); }
+  .note { position: fixed; z-index: 30; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 300px;
+    background: var(--surface); box-shadow: var(--shadow); border-radius: var(--r); padding: 16px; text-align: center;
+    color: var(--text-2); }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="top">
+  <div class="bar">
+    <div class="bar__row">
+      <div class="bar__title">АЗС рядом</div>
+      <div class="bar__meta" id="meta"></div>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Топливо"></div>
+    <div class="legend" aria-label="Легенда">
+      <span><i class="ok"></i>за 30 мин</span>
+      <span><i class="warn"></i>до суток</span>
+      <span><i class="off"></i>больше суток / нет топлива</span>
+      <span class="legend__note">АИ-92, АИ-95, АИ-98, ДТ — вместе с Танеко</span>
+    </div>
+  </div>
+</div>
+<button class="locate" id="locate" type="button" aria-label="Где я">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+</button>
+
+<div class="sheet" id="sheet"><div class="card" id="card"></div></div>
+
+<script>
+(() => {
+  "use strict";
+  // Как в pack.py: топливо (пары «+Танеко» — одно) и коды давности последней онлайн-заправки.
+  const FUELS = ["АИ-92", "АИ-95", "АИ-98", "АИ-100", "ДТ", "ДТ Арктика", "Газ", "Метан", "СПГ", "АИ-80", "AdBlue", "Электро"];
+  const AGE_TEXT = [null, "до 30 мин назад", "30–60 мин назад", "1–2 ч назад", "2–6 ч назад", "6–12 ч назад",
+    "12–24 ч назад", "больше суток"];
+  const STALE_MIN = 15;                               // сводка старше — «данные устарели»
+  const DATA = { stations: [], fuels: [], at: Date.now(), demo: true };
+  const tg = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null;
+  const KAZAN = [55.79, 49.12];
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  let chosen = ["АИ-92", "АИ-95"];                   // по умолчанию; после загрузки — только те, что есть в сети
+  let me = null, map = null, cluster = null, mePin = null, picked = null;
+
+  // ------------------------------------------------------------ Telegram
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    document.documentElement.dataset.theme = tg.colorScheme === "dark" ? "dark" : "light";
+  }
+
+  // ------------------------------------------------------------ данные: stations.json + сводка из ссылки
+  // stations.json: [[номер, широта, долгота, адрес, филиал], …] — порядок = номер АЗС в сводке.
+  // Ссылка: #v=1&t=<unix>&d=<base64url(deflate-raw(3 бита на АЗС×топливо))> — собирает бот (pack.py).
+  async function inflate(b64) {
+    const bin = atob(b64.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64.length + 3) % 4));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  function code(bytes, i) {                         // i-й трёхбитный код, младшие биты — первыми (как pack.py)
+    const bit = i * 3, b = bit >> 3, off = bit & 7;
+    return (((bytes[b] || 0) | ((bytes[b + 1] || 0) << 8)) >> off) & 7;
+  }
+
+  function demoCodes(num) {                         // без ссылки — демо: повторяемые случайные данные
+    let x = num * 2654435761 % 4294967296;
+    const rnd = () => (x = (x * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    return FUELS.map((f, j) => {
+      if (j > 1 && j !== 4 && rnd() > 0.35) return 0;              // АИ-92, АИ-95, ДТ — почти везде
+      const r = rnd();
+      return r < 0.55 ? 1 : r < 0.85 ? 2 + Math.floor(rnd() * 5) : 7;
+    });
+  }
+
+  async function loadData() {
+    const rows = await (await fetch("stations.json", { cache: "no-cache" })).json();
+    const p = new URLSearchParams(location.hash.slice(1));
+    let bytes = null;
+    if (p.get("v") === "1" && p.get("d")) {
+      try { bytes = await inflate(p.get("d")); } catch (e) { bytes = null; }
+    }
+    DATA.demo = !bytes;
+    DATA.at = bytes && Number(p.get("t")) ? Number(p.get("t")) * 1000 : Date.now();
+    DATA.stations = rows.map(([num, lat, lon, address, region], i) => {
+      const codes = bytes ? FUELS.map((_, j) => code(bytes, i * FUELS.length + j)) : demoCodes(num);
+      return { num, lat, lon, address, region, codes: Object.fromEntries(FUELS.map((f, j) => [f, codes[j]])) };
+    });
+    DATA.fuels = FUELS.filter((f) => DATA.stations.some((s) => s.codes[f] > 0));
+    chosen = chosen.filter((f) => DATA.fuels.includes(f));
+    if (!chosen.length && DATA.fuels.length) chosen = [DATA.fuels[0]];
+  }
+
+  function fuelState(s, f) {
+    const c = s.codes[f] || 0;
+    return c === 0 ? "none" : c === 1 ? "ok" : c === 7 ? "off" : "warn";
+  }
+
+  function stateOf(s) {
+    // лучшее по выбранному топливу: зелёный, если хоть одно за 30 мин; жёлтый — если до суток; иначе серый
+    const st = chosen.map((f) => fuelState(s, f));
+    return st.includes("ok") ? "ok" : st.includes("warn") ? "warn" : "off";
+  }
+
+  function km(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  const kmText = (d) => d < 1 ? `${Math.round(d * 100) * 10} м` : `${d.toFixed(d < 10 ? 1 : 0).replace(".", ",")} км`;
+  const hhmm = (t) => `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+
+  const agoText = (s, f) => (fuelState(s, f) === "none" ? "нет на колонках" : AGE_TEXT[s.codes[f]]);
+
+  function nearestOk() {
+    if (!me) return null;
+    let best = null;
+    for (const s of DATA.stations) {
+      if (stateOf(s) !== "ok") continue;
+      const d = km(me, [s.lat, s.lon]);
+      if (!best || d < best.d) best = { s, d };
+    }
+    return best;
+  }
+
+  // ------------------------------------------------------------ верх
+  function renderTop() {
+    const stale = !DATA.demo && Date.now() - DATA.at > STALE_MIN * 60000;
+    $("meta").innerHTML = `данные на ${hhmm(new Date(DATA.at))}`
+      + (DATA.demo ? '<span class="demo">демо</span>' : stale ? '<span class="demo demo--stale">устарели</span>' : "");
+    $("chips").replaceChildren(...DATA.fuels.map((f) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (chosen.includes(f) ? " is-on" : "");
+      b.textContent = f;
+      b.setAttribute("aria-pressed", String(chosen.includes(f)));
+      b.onclick = () => {
+        chosen = chosen.includes(f) ? chosen.filter((x) => x !== f) : [...chosen, f];
+        if (!chosen.length) chosen = [f];                   // хотя бы одно топливо
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        renderTop();
+        const again = [...$("chips").children].find((x) => x.textContent === f);
+        if (again) again.scrollIntoView({ inline: "nearest", block: "nearest" });   // нажатая кнопка — на виду
+        draw();
+      };
+      return b;
+    }));
+  }
+
+  // ------------------------------------------------------------ карта
+  const layouts = {};
+  function pinLayout(k, best) {
+    const key = k + (best ? "+" : "");
+    if (!layouts[key]) {
+      layouts[key] = ymaps.templateLayoutFactory.createClass(
+        `<div class="pin pin--${k}${best ? " pin--best" : ""}"><span class="pin__dot"></span>№$[properties.num]</div>`);
+    }
+    return layouts[key];
+  }
+
+  function draw() {
+    if (!map) return;
+    const best = nearestOk();
+    cluster.removeAll();
+    cluster.add(DATA.stations.map((s) => {
+      const k = stateOf(s);
+      const m = new ymaps.Placemark([s.lat, s.lon], { num: s.num }, {
+        iconLayout: pinLayout(k, best && best.s === s),
+        iconShape: { type: "Rectangle", coordinates: [[-36, -34], [36, 0]] },
+        zIndex: k === "ok" ? 300 : k === "warn" ? 200 : 100,
+      });
+      m.events.add("click", (e) => { e.stopPropagation(); openCard(s); });
+      return m;
+    }));
+    if (picked) openCard(picked);
+    else if (best) openCard(best.s, true);
+  }
+
+  function setMe(coords) {
+    me = coords;
+    if (mePin) map.geoObjects.remove(mePin);
+    mePin = new ymaps.Placemark(me, {}, {
+      iconLayout: ymaps.templateLayoutFactory.createClass('<div class="me"></div>'),
+      iconShape: { type: "Circle", coordinates: [0, 0], radius: 12 }, zIndex: 1000 });
+    map.geoObjects.add(mePin);
+    draw();
+    // в кадре — вы и ближайшая АЗС с заправками (сверху — панель топлива, снизу — карточка)
+    const best = nearestOk();
+    if (best) {
+      const b = [[Math.min(me[0], best.s.lat), Math.min(me[1], best.s.lon)],
+                 [Math.max(me[0], best.s.lat), Math.max(me[1], best.s.lon)]];
+      const bottom = ($("sheet").offsetHeight || 0) + 60;
+      map.setBounds(b, { checkZoomRange: true, zoomMargin: [150, 50, bottom, 50], duration: 300 })
+        .then(() => { if (map.getZoom() > 15) map.setZoom(15); });
+    } else {
+      map.setCenter(me, 13, { duration: 300 });
+    }
+  }
+
+  // ------------------------------------------------------------ геопозиция
+  function locate() {
+    const done = (lat, lon) => setMe([lat, lon]);
+    // для показа с компьютера: ?at=55.79,49.12 — место вручную вместо геопозиции
+    const at = new URLSearchParams(location.search).get("at");
+    const m = at && at.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+    if (m) return done(Number(m[1]), Number(m[2]));
+    const fail = () => note("Геопозиция не разрешена — показываю Казань. Разрешите доступ и нажмите ◎ внизу справа.");
+    if (tg && tg.LocationManager) {
+      tg.LocationManager.init(() => {
+        if (!tg.LocationManager.isLocationAvailable) return browserGeo(done, fail);
+        tg.LocationManager.getLocation((loc) => (loc ? done(loc.latitude, loc.longitude) : fail()));
+      });
+      return;
+    }
+    browserGeo(done, fail);
+  }
+
+  function browserGeo(done, fail) {
+    if (!navigator.geolocation) return fail();
+    navigator.geolocation.getCurrentPosition((p) => done(p.coords.latitude, p.coords.longitude), fail,
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  }
+
+  function note(text) {
+    const n = document.createElement("div");
+    n.className = "note";
+    n.textContent = text;
+    document.body.append(n);
+    setTimeout(() => n.remove(), 4500);
+  }
+
+  // ------------------------------------------------------------ карточка АЗС и маршрут
+  function openCard(s, auto) {
+    picked = auto ? null : s;
+    const d = me ? km(me, [s.lat, s.lon]) : null;
+    const rows = chosen.map((f) => {
+      const k = fuelState(s, f);
+      const text = agoText(s, f);
+      return `<div class="r"><i class="${k === "none" ? "off" : k}"></i><b>${esc(f)}</b><span>${esc(text)}</span></div>`;
+    }).join("");
+    $("card").innerHTML = `
+      <div class="card__head">
+        <div>${auto ? '<div class="card__kicker">Ближайшая с заправками</div>' : ""}
+          <div class="card__num">АЗС №${esc(s.num)}</div>
+          <div class="card__addr">${esc(shortAddr(s.address))}</div></div>
+        ${d !== null ? `<div class="card__dist">${kmText(d)}<small>по прямой</small></div>` : ""}
+        <button class="card__close" type="button" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="rows">${rows}</div>
+      <div class="actions">
+        <button class="btn btn--main" type="button" data-go="navi">Маршрут</button>
+        <button class="btn" type="button" data-go="maps">Яндекс.Карты</button>
+      </div>
+      <p class="hint">Только онлайн-заправки через приложение — оплату на кассе не видно.</p>`;
+    $("card").querySelector(".card__close").onclick = closeCard;
+    $("card").querySelectorAll("[data-go]").forEach((b) => { b.onclick = () => route(s, b.dataset.go); });
+    $("sheet").classList.add("is-open");
+    requestAnimationFrame(() => document.documentElement.style.setProperty("--sheet", $("sheet").offsetHeight + "px"));
+    if (!auto && map) map.panTo([s.lat, s.lon], { duration: 250 });
+  }
+
+  function closeCard() {
+    picked = null;
+    $("sheet").classList.remove("is-open");
+    document.documentElement.style.setProperty("--sheet", "0px");
+  }
+
+  function shortAddr(addr) {
+    const parts = String(addr || "").split(",").map((x) => x.trim()).filter(Boolean);
+    return (parts.length > 3 ? parts.slice(-3) : parts).join(", ");
+  }
+
+  function mapsUrl(s) {
+    return `https://yandex.ru/maps/?rtext=${me ? me.join(",") : ""}~${s.lat},${s.lon}&rtt=auto`;
+  }
+
+  function route(s, how) {
+    if (how === "maps") return openLink(mapsUrl(s));
+    // Навигатор: приложение по своей ссылке; не открылось за секунду — Яндекс.Карты с тем же маршрутом
+    window.location.href = `yandexnavi://build_route_on_map?lat_to=${s.lat}&lon_to=${s.lon}`;
+    setTimeout(() => { if (document.visibilityState === "visible") openLink(mapsUrl(s)); }, 1200);
+  }
+
+  function openLink(url) {
+    if (tg) tg.openLink(url); else window.open(url, "_blank", "noopener");
+  }
+
+  // ------------------------------------------------------------ старт
+  $("locate").onclick = locate;
+  if (!window.ymaps) { note("Карта не загрузилась — нет связи с Яндекс.Картами"); return; }
+  loadData().catch(() => note("Список АЗС не загрузился — обновите страницу")).then(() => renderTop()).then(() => ymaps.ready(() => {
+    map = new ymaps.Map("map", { center: KAZAN, zoom: 11, controls: [] }, { suppressMapOpenBlock: true });
+    map.controls.add("zoomControl", { position: { right: 12, top: 130 }, size: "small" });
+    cluster = new ymaps.Clusterer({ preset: "islands#invertedDarkGreenClusterIcons", groupByCoordinates: false,
+      gridSize: 56, hasBalloon: false });
+    map.geoObjects.add(cluster);
+    map.events.add("click", closeCard);
+    draw();
+    locate();
+  }));
+})();
+</script>
+</body>
+</html>
