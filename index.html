@@ -96,6 +96,7 @@
   .btn--main { background: var(--accent); color: #fff; }
   .navs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .navs__title { grid-column: 1 / -1; font-size: 12.5px; font-weight: 650; color: var(--text-3); }
+  .navs [data-app="any"] { grid-column: 1 / -1; }
   .hint { color: var(--text-3); font-size: 12px; margin: 8px 2px 0; }
   .ok { background: var(--ok); } .warn { background: var(--warn); } .off { background: var(--off); }
   .note { position: fixed; z-index: 30; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 300px;
@@ -444,16 +445,18 @@
     return `https://yandex.ru/maps/?rtext=${me ? me.join(",") : ""}~${s.lat},${s.lon}&rtt=auto`;
   }
 
-  // «Проложить маршрут» → выбор приложения; последнее выбранное — первым и подсвечено.
-  // Из Telegram открываются только https-ссылки (yandexnavi:// даёт ERR_UNKNOWN_URL_SCHEME), поэтому Навигатор —
-  // через go.html рядом со страницей: она уже в браузере передаёт маршрут приложению (на Android — intent,
-  // нет Навигатора — Яндекс.Карты). Карты, 2ГИС и Google — их https-ссылки подхватывают приложения на телефоне.
-  const NAVS = [["navi", "Яндекс Навигатор"], ["ymaps", "Яндекс Карты"], ["2gis", "2ГИС"], ["google", "Google Карты"]];
+  // «Проложить маршрут» → выбор приложения в постоянном порядке; выбранное в прошлый раз подсвечено.
+  // Из Telegram открываются только https-ссылки: у Яндекс Карт, 2ГИС, Apple и Google их подхватывают приложения.
+  // На Android первым — «Из установленных на телефоне»: go.html рядом со страницей открывает место ссылкой geo:,
+  // и Android сам показывает окно «Открыть с помощью» только с теми приложениями, что стоят (точка, не маршрут).
+  const NAVS = [["ymaps", "Яндекс Карты"], ["2gis", "2ГИС"], ["apple", "Apple Maps"], ["google", "Google Maps"]];
   const NAV_KEY = "azs_nav";
+  const ANDROID = /Android/i.test(navigator.userAgent) || (tg && tg.platform === "android");
 
   function navUrl(s, app) {
-    if (app === "navi") return new URL(`go.html?lat=${s.lat}&lon=${s.lon}`, location.href).href;
+    if (app === "any") return new URL(`go.html?lat=${s.lat}&lon=${s.lon}&n=${encodeURIComponent(s.num)}`, location.href).href;
     if (app === "2gis") return `https://2gis.ru/routeSearch/rsType/car/to/${s.lon},${s.lat}`;
+    if (app === "apple") return `https://maps.apple.com/?daddr=${s.lat},${s.lon}&dirflg=d`;
     if (app === "google") return `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lon}&travelmode=driving`;
     return mapsUrl(s);
   }
@@ -464,7 +467,7 @@
 
   function showNavs(s) {
     const last = lastNav();
-    const list = [...NAVS].sort((a, b) => (b[0] === last) - (a[0] === last));
+    const list = ANDROID ? [["any", "Из установленных на телефоне"], ...NAVS] : NAVS;
     const box = $("go");
     box.className = "navs";
     box.innerHTML = '<div class="navs__title">Чем проложить маршрут?</div>' + list.map(([app, name]) =>
