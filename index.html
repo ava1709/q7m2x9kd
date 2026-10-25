@@ -2,7 +2,8 @@
 <!-- Карта АЗС — Mini App для Telegram. Где за последние 30 минут были успешные онлайн-заправки
      выбранным топливом. Данные: сводка в адресе после # (ставит бот, azsbot.py), последняя запоминается на телефоне.
      Карта — Яндекс.Карты 2.1 (ключ в адресе скрипта). В Telegram — тема и геопозиция Telegram,
-     в браузере — геопозиция браузера. Цвета: зелёный ≤ 30 мин, жёлтый — до суток, серый — больше суток или нет топлива. -->
+     в браузере — геопозиция браузера. Цвета: зелёный ≤ 30 мин, жёлтый — до суток, серый — больше суток или нет топлива.
+     Вид — по макету приложения АЗС (Figma «AZSv2»): строка сверху, плитки топлива, серая карта, зелёный #23AA89. -->
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -12,94 +13,163 @@
 <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&amp;apikey=47ec3f3e-8bd7-4c03-a385-fef0ee84bbbf"></script>
 <style>
   :root {
-    --bg: #ffffff; --text: #16201b; --text-2: #4b5852; --text-3: #7d8984; --line: rgba(22, 32, 27, .1);
-    --surface: rgba(255, 255, 255, .96); --chip: #f1f4f2; --chip-on: #12865a; --chip-on-text: #ffffff;
-    --ok: #12a160; --warn: #e2a500; --off: #9aa5a0; --accent: #12865a; --shadow: 0 6px 24px rgba(16, 32, 24, .14);
-    --r: 16px; --font: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --brand: #23aa89; --brand-soft: rgba(35, 170, 137, .14); --text: #111816; --text-2: #56625f; --text-3: #8a9592;
+    --surface: #ffffff; --soft: #dee6ee; --btn2: #eef2f5; --line: rgba(17, 24, 22, .08);
+    --ok: #23aa89; --warn: #f2c200; --off: #a9b3b6; --me: #fe2055; --dark: #1e2a2d;
+    --shadow: 0 4px 16px rgba(20, 40, 40, .12); --r: 16px;
+    --font: -apple-system, "SF Pro Text", Inter, Roboto, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   }
   html[data-theme="dark"] {
-    --bg: #17191c; --text: #eef2f0; --text-2: #b9c2be; --text-3: #8b9590; --line: rgba(255, 255, 255, .1);
-    --surface: rgba(30, 33, 36, .96); --chip: #262a2e; --shadow: 0 6px 24px rgba(0, 0, 0, .45);
+    --text: #eef3f2; --text-2: #aab5b3; --text-3: #7f8a88; --surface: #1c2124; --soft: #111517; --btn2: #262c30;
+    --line: rgba(255, 255, 255, .08); --shadow: 0 4px 18px rgba(0, 0, 0, .45);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.35 var(--font);
+  html, body { margin: 0; height: 100%; background: var(--surface); color: var(--text); font: 15px/1.35 var(--font);
     -webkit-font-smoothing: antialiased; overflow: hidden; }
-  button { font: inherit; color: inherit; cursor: pointer; }
+  button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  svg { display: block; }
   #map { position: fixed; inset: 0; }
+  [class*="ground-pane"] { filter: grayscale(1) brightness(1.05) contrast(.9); }   /* серая карта, как в макете */
+  html[data-theme="dark"] [class*="ground-pane"] { filter: grayscale(1) invert(.9) hue-rotate(180deg) brightness(.95) contrast(.85); }
 
-  /* верх: заголовок и топливо */
+  /* верх: строка с топливом, время данных и легенда */
   .top { position: fixed; z-index: 10; left: 0; right: 0; top: 0; padding: 10px 12px 0;
     padding-top: max(10px, env(safe-area-inset-top)); pointer-events: none; }
-  .bar { pointer-events: auto; background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow);
-    padding: 10px 12px 10px; backdrop-filter: blur(8px); max-width: 720px; margin: 0 auto; }
-  .bar__row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .bar__title { font-weight: 750; font-size: 16px; }
-  .bar__meta { font-size: 12.5px; color: var(--text-3); white-space: nowrap; }
-  .demo.demo--stale { background: #fdf0c8; color: #8a6200; }
-  .demo { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--text-2);
-    font-size: 11.5px; font-weight: 650; }
-  .fresh { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 7px 8px 7px 11px; border-radius: 12px;
-    background: #fdf0c8; color: #6b4d00; font-size: 12.5px; line-height: 1.3; }
+  .top > * { pointer-events: auto; max-width: 640px; margin-left: auto; margin-right: auto; }
+  .search { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 6px 0 14px; border-radius: 14px;
+    background: var(--surface); box-shadow: var(--shadow); }
+  .search__ico { flex: none; color: var(--brand); }
+  .search__chips { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .search__chips::-webkit-scrollbar { display: none; }
+  .search__empty { color: var(--text-3); white-space: nowrap; }
+  .tag { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 6px 0 11px;
+    border: 0; border-radius: 9px; background: var(--brand); color: #fff; font-size: 14px; font-weight: 600; }
+  .tag span { display: grid; place-items: center; width: 18px; height: 18px; font-size: 15px; line-height: 1; opacity: .9; }
+  .tag--solo { padding-right: 11px; }
+  .search__filter { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent;
+    color: var(--brand); display: grid; place-items: center; }
+  .info { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px;
+    background: var(--surface); box-shadow: 0 2px 8px rgba(20, 40, 40, .1); font-size: 12.5px; color: var(--text-2);
+    white-space: nowrap; }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .pill i + b { font-weight: 500; margin-right: 4px; }
+  .badge { padding: 1px 7px; border-radius: 999px; background: var(--btn2); color: var(--text-2); font-size: 11.5px;
+    font-weight: 650; }
+  .badge--stale { background: #fff3c4; color: #7a5a00; }
+  .fresh { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 8px 8px 8px 12px; border-radius: 14px;
+    background: #fff3c4; color: #5f4600; font-size: 13px; line-height: 1.3; box-shadow: var(--shadow); }
   .fresh[hidden] { display: none; }
-  html[data-theme="dark"] .fresh { background: rgba(226, 165, 0, .16); color: #f3d27a; }
-  .fresh__btn { margin-left: auto; flex: none; border: 0; border-radius: 999px; padding: 7px 13px; background: var(--accent);
-    color: #fff; font-weight: 700; font-size: 13px; }
+  html[data-theme="dark"] .fresh { background: #3a3218; color: #f3d27a; }
+  .fresh__btn { margin-left: auto; flex: none; border: 0; border-radius: 10px; padding: 8px 14px; background: var(--brand);
+    color: #fff; font-weight: 650; font-size: 13.5px; }
   .fresh__btn[hidden] { display: none; }
-  .chips { display: flex; gap: 6px; margin: 9px -12px 0; padding: 0 12px 2px; overflow-x: auto; scrollbar-width: none; }
-  .chips::-webkit-scrollbar { display: none; }
-  .chip { flex: none; border: 0; border-radius: 999px; padding: 7px 13px; background: var(--chip); font-size: 14px;
-    font-weight: 650; color: var(--text-2); transition: background .15s, color .15s; }
-  .chip.is-on { background: var(--chip-on); color: var(--chip-on-text); }
-
-  /* значок АЗС на карте */
-  .pin { position: relative; transform: translate(-50%, -100%); display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 8px 4px 5px; border-radius: 999px; background: #fff; box-shadow: 0 2px 8px rgba(16, 32, 24, .25);
-    font: 700 12px/1 var(--font); color: #16201b; white-space: nowrap; border: 2px solid var(--c); }
-  .pin::after { content: ""; position: absolute; left: 50%; bottom: -7px; width: 10px; height: 10px; margin-left: -5px;
-    background: #fff; border-right: 2px solid var(--c); border-bottom: 2px solid var(--c); transform: rotate(45deg); }
-  .pin__dot { width: 14px; height: 14px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 3px #fff; }
-  .pin--ok { --c: var(--ok); } .pin--warn { --c: var(--warn); } .pin--off { --c: var(--off); color: #6b7570; }
-  .pin--best { box-shadow: 0 0 0 4px rgba(18, 161, 96, .28), 0 2px 8px rgba(16, 32, 24, .25); }
-  .me { width: 18px; height: 18px; transform: translate(-50%, -50%); border-radius: 50%; background: #2f7cf6;
-    border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(47, 124, 246, .22), 0 1px 4px rgba(0, 0, 0, .3); }
-
-  /* легенда — строкой под топливом; кнопка «моё место» */
-  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--text-3); }
-  .legend__note { flex-basis: 100%; color: var(--text-3); opacity: .85; }
-  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
-  .locate { position: fixed; z-index: 10; right: 12px; bottom: calc(var(--sheet, 0px) + 12px + env(safe-area-inset-bottom));
-    width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--surface); box-shadow: var(--shadow);
-    display: grid; place-items: center; transition: bottom .2s; }
-  .locate svg { width: 20px; height: 20px; fill: none; stroke: var(--accent); stroke-width: 2.2; }
-
-  /* нижняя карточка: ближайшая или выбранная АЗС */
-  .sheet { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; padding: 0 12px;
-    padding-bottom: max(12px, env(safe-area-inset-bottom)); transform: translateY(110%); transition: transform .22s ease; }
-  .sheet.is-open { transform: none; }
-  .card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 14px 14px 12px;
-    max-width: 720px; margin: 0 auto; }
-  .card__head { display: flex; align-items: flex-start; gap: 10px; }
-  .card__kicker { font-size: 12px; font-weight: 700; color: var(--ok); text-transform: uppercase; letter-spacing: .04em; }
-  .card__num { font-size: 18px; font-weight: 800; }
-  .card__addr { color: var(--text-2); font-size: 13.5px; margin-top: 2px; }
-  .card__dist { margin-left: auto; text-align: right; white-space: nowrap; font-weight: 700; }
-  .card__dist small { display: block; color: var(--text-3); font-weight: 600; font-size: 12px; }
-  .card__close { border: 0; background: var(--chip); border-radius: 50%; width: 28px; height: 28px; flex: none;
-    color: var(--text-3); font-size: 16px; line-height: 1; }
-  .rows { margin: 10px 0 12px; display: grid; gap: 6px; }
-  .r { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-  .r i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-  .r b { font-weight: 650; }
-  .r span { margin-left: auto; color: var(--text-2); font-size: 13.5px; }
-  .actions { display: flex; gap: 8px; }
-  .btn { flex: 1; border: 0; border-radius: 12px; padding: 12px 10px; font-weight: 700; background: var(--chip); }
-  .btn--main { background: var(--accent); color: #fff; }
-  .navs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .navs__title { grid-column: 1 / -1; font-size: 12.5px; font-weight: 650; color: var(--text-3); }
-  .navs [data-app="any"] { grid-column: 1 / -1; }
-  .hint { color: var(--text-3); font-size: 12px; margin: 8px 2px 0; }
   .ok { background: var(--ok); } .warn { background: var(--warn); } .off { background: var(--off); }
-  .note { position: fixed; z-index: 30; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 300px;
+
+  /* значки на карте: с заправками — зелёная «таблетка», до суток — белая с жёлтой точкой, остальные — точка */
+  .pin { transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 4px; height: 30px;
+    padding: 0 10px 0 7px; border-radius: 15px; font: 600 13px/1 var(--font); white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(20, 40, 40, .22); border: 2px solid #fff; }
+  .pin--ok { background: var(--brand); color: #fff; }
+  .pin--warn { background: #fff; color: #2b3532; padding-left: 9px; }
+  .pin--warn i { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+  .pin--best { box-shadow: 0 0 0 5px rgba(35, 170, 137, .25), 0 2px 10px rgba(20, 40, 40, .3); height: 34px;
+    font-size: 14px; border-radius: 17px; }
+  .dot { transform: translate(-50%, -50%); width: 14px; height: 14px; border-radius: 50%; background: #c7cfd2;
+    border: 3px solid #fff; box-shadow: 0 1px 4px rgba(20, 40, 40, .25); }
+  .cl { transform: translate(-50%, -50%); display: grid; place-items: center; min-width: 36px; height: 36px;
+    padding: 0 8px; border-radius: 18px; background: #fff; color: var(--brand); border: 2px solid var(--brand);
+    font: 700 13px/1 var(--font); box-shadow: 0 2px 8px rgba(20, 40, 40, .22); }
+  .me { transform: translate(-50%, -50%); width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(254, 32, 85, .13); display: grid; place-items: center; }
+  .me::after { content: ""; width: 16px; height: 16px; border-radius: 50%; background: var(--me); border: 3px solid #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .3); }
+
+  /* справа: масштаб и «где я» — белые кнопки, как в макете */
+  .ctrl { position: fixed; z-index: 10; right: 12px; top: 52%; transform: translateY(-50%); display: grid; gap: 12px;
+    justify-items: center; }
+  .zoom { display: grid; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  .zoom button { width: 44px; height: 44px; border: 0; background: transparent; font-size: 22px; font-weight: 400;
+    color: var(--text); display: grid; place-items: center; }
+  .zoom button + button { border-top: 1px solid var(--line); }
+  .round { width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow);
+    display: grid; place-items: center; color: var(--text); }
+
+  /* внизу: «Ближайшая АЗС» — тёмная карточка с расстоянием */
+  .near { position: fixed; z-index: 15; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom));
+    max-width: 640px; margin: 0 auto; display: flex; align-items: center; gap: 12px; padding: 14px 14px 14px 16px;
+    border: 0; border-radius: 16px; text-align: left; color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, .25);
+    background: radial-gradient(120% 140% at 100% 0%, rgba(35, 170, 137, .45), transparent 55%),
+      linear-gradient(135deg, #1e2a2d, #02121a); }
+  .near[hidden] { display: none; }
+  .near__text { flex: 1; min-width: 0; }
+  .near__title, .near__sub { display: block; }
+  .near__title { font-size: 16px; font-weight: 600; }
+  .near__sub { font-size: 12.5px; color: rgba(255, 255, 255, .7); margin-top: 2px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .near__km { flex: none; padding: 6px 10px; border-radius: 9px; background: var(--brand); font-weight: 600; font-size: 14px; }
+
+  /* карточка АЗС */
+  .sheet { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; padding: 0 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom)); transform: translateY(110%); transition: transform .22s ease; }
+  .sheet.is-open { transform: none; }
+  .card { background: var(--surface); border-radius: 20px; box-shadow: 0 -2px 24px rgba(20, 40, 40, .16);
+    padding: 16px 16px 14px; max-width: 640px; margin: 0 auto; }
+  .card__head { display: flex; align-items: flex-start; gap: 10px; }
+  .card__kicker { font-size: 12.5px; font-weight: 600; color: var(--brand); margin-bottom: 2px; }
+  .card__num { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+  .card__addr { color: var(--text-2); font-size: 13.5px; margin-top: 3px; }
+  .card__km { flex: none; margin-left: auto; padding: 5px 9px; border-radius: 9px; background: var(--brand-soft);
+    color: var(--brand); font-weight: 650; font-size: 13.5px; white-space: nowrap; }
+  .card__close { flex: none; border: 0; background: var(--btn2); border-radius: 50%; width: 30px; height: 30px;
+    color: var(--text-3); font-size: 15px; line-height: 1; }
+  .rows { margin: 12px 0 14px; border-radius: 14px; background: var(--btn2); padding: 2px 12px; }
+  .r { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14.5px; }
+  .r + .r { border-top: 1px solid var(--line); }
+  .fb { flex: none; min-width: 56px; padding: 4px 8px; border-radius: 8px; background: var(--fc); color: var(--ft, #fff);
+    font-size: 13px; font-weight: 650; text-align: center; }
+  .r__st { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); font-size: 13.5px; }
+  .r__st i { width: 8px; height: 8px; border-radius: 50%; }
+  .btn { width: 100%; border: 0; border-radius: 14px; min-height: 52px; padding: 12px; font-weight: 600; font-size: 16px;
+    background: var(--btn2); color: var(--text); }
+  .btn--main { background: var(--brand); color: #fff; }
+  .btn:disabled { opacity: .45; }
+  .navs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .navs .btn { min-height: 46px; font-size: 15px; }
+  .navs .btn.is-last { box-shadow: inset 0 0 0 2px var(--brand); color: var(--brand); }
+  .navs__title { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--text-3); }
+  .navs [data-app="any"] { grid-column: 1 / -1; }
+  .hint { color: var(--text-3); font-size: 12px; margin: 10px 2px 0; text-align: center; }
+
+  /* выбор топлива — отдельный экран, как «Поиск» в приложении */
+  .filter { position: fixed; z-index: 40; inset: 0; background: var(--soft); display: flex; flex-direction: column;
+    padding: max(10px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+  .filter[hidden] { display: none; }
+  .filter__head { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 14px 0 4px; border-radius: 14px;
+    background: var(--surface); box-shadow: 0 2px 8px rgba(20, 40, 40, .08); }
+  .filter__back { width: 40px; height: 40px; border: 0; background: transparent; color: var(--brand); display: grid;
+    place-items: center; }
+  .filter__title { font-weight: 600; font-size: 16px; }
+  .filter__body { flex: 1; overflow-y: auto; padding: 14px 0 8px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tile { position: relative; height: 68px; border: 0; border-radius: 12px; background: var(--surface); text-align: left;
+    padding: 10px 11px; display: flex; flex-direction: column; justify-content: flex-start; color: var(--text); }
+  .tile b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  .tile small { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  .tile.is-on { background: var(--fc); color: var(--ft, #fff); }
+  .tile.is-on small { color: inherit; opacity: .85; }
+  .tile.is-on::after { content: ""; position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; border-radius: 50%;
+    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 10.5l3 3 6-6.5' fill='none' stroke='%23111816' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 20px no-repeat; }
+  .filter__note { font-size: 12.5px; color: var(--text-2); margin: 12px 2px 0; }
+  .legend { margin-top: 12px; border-radius: 12px; background: var(--surface); padding: 4px 12px; }
+  .legend div { display: flex; align-items: center; gap: 10px; min-height: 38px; font-size: 13.5px; color: var(--text-2); }
+  .legend div + div { border-top: 1px solid var(--line); }
+  .legend i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .filter__actions { display: grid; gap: 8px; padding-top: 8px; }
+  .filter__actions .btn:not(.btn--main) { background: var(--btn2); }
+  html:not([data-theme="dark"]) .filter__actions .btn:not(.btn--main) { background: #eef2f5; }
+
+  .note { position: fixed; z-index: 50; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(300px, 86vw);
     background: var(--surface); box-shadow: var(--shadow); border-radius: var(--r); padding: 16px; text-align: center;
     color: var(--text-2); }
 </style>
@@ -108,29 +178,61 @@
 <div id="map"></div>
 
 <div class="top">
-  <div class="bar">
-    <div class="bar__row">
-      <div class="bar__title">АЗС рядом</div>
-      <div class="bar__meta" id="meta"></div>
-    </div>
-    <div class="chips" id="chips" role="group" aria-label="Топливо"></div>
-    <div class="legend" aria-label="Легенда">
-      <span><i class="ok"></i>за 30 мин</span>
-      <span><i class="warn"></i>до суток</span>
-      <span><i class="off"></i>больше суток / нет топлива</span>
-      <span class="legend__note">АИ-92, АИ-95, АИ-98, ДТ — вместе с Танеко</span>
-    </div>
-    <div class="fresh" id="fresh" hidden>
-      <span id="fresh-text"></span>
-      <button class="fresh__btn" id="fresh-btn" type="button" hidden>Обновить</button>
-    </div>
+  <div class="search">
+    <svg class="search__ico" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.6 2.5c.4 3.1 4.9 5.6 4.9 10.6a5.5 5.5 0 0 1-11 0c0-2.4 1.3-4.1 2.6-5.3-.1 2 .8 3.3 2 3.4-.4-3.3.6-6.1 1.5-8.7z"/></svg>
+    <div class="search__chips" id="chips" aria-label="Выбранное топливо"></div>
+    <button class="search__filter" id="filter-open" type="button" aria-label="Выбрать топливо">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+    </button>
+  </div>
+  <div class="info">
+    <span class="pill" id="meta"></span>
+    <span class="pill" aria-label="Легенда"><i class="ok"></i><b>30 мин</b><i class="warn"></i><b>сутки</b><i class="off"></i><b>нет</b></span>
+  </div>
+  <div class="fresh" id="fresh" hidden>
+    <span id="fresh-text"></span>
+    <button class="fresh__btn" id="fresh-btn" type="button" hidden>Обновить</button>
   </div>
 </div>
-<button class="locate" id="locate" type="button" aria-label="Где я">
-  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+
+<div class="ctrl">
+  <div class="zoom">
+    <button id="zoom-in" type="button" aria-label="Приблизить">+</button>
+    <button id="zoom-out" type="button" aria-label="Отдалить">−</button>
+  </div>
+  <button class="round" id="locate" type="button" aria-label="Где я">
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.5 3.5 3.8 10.4c-.8.3-.7 1.4.1 1.6l6.6 1.5 1.5 6.6c.2.8 1.3.9 1.6.1z"/></svg>
+  </button>
+</div>
+
+<button class="near" id="near" type="button" hidden>
+  <span class="near__text"><span class="near__title">Ближайшая АЗС</span><span class="near__sub" id="near-sub"></span></span>
+  <span class="near__km" id="near-km"></span>
 </button>
 
 <div class="sheet" id="sheet"><div class="card" id="card"></div></div>
+
+<div class="filter" id="filter" hidden role="dialog" aria-label="Выбор топлива">
+  <div class="filter__head">
+    <button class="filter__back" id="filter-close" type="button" aria-label="Назад">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <span class="filter__title">Топливо</span>
+  </div>
+  <div class="filter__body">
+    <div class="tiles" id="tiles"></div>
+    <p class="filter__note">АИ-92, АИ-95, АИ-98 и ДТ считаются вместе с Танеко. Можно выбрать несколько.</p>
+    <div class="legend">
+      <div><i class="ok"></i>Онлайн-заправки этим топливом были за последние 30 минут</div>
+      <div><i class="warn"></i>Давно, но меньше суток — время в карточке АЗС</div>
+      <div><i class="off"></i>Больше суток или этого топлива нет на колонках</div>
+    </div>
+  </div>
+  <div class="filter__actions">
+    <button class="btn btn--main" id="filter-apply" type="button">Применить</button>
+    <button class="btn" id="filter-reset" type="button">Сбросить</button>
+  </div>
+</div>
 
 <script>
 (() => {
@@ -139,14 +241,28 @@
   const FUELS = ["АИ-92", "АИ-95", "АИ-98", "АИ-100", "ДТ", "ДТ Арктика", "Газ", "Метан", "СПГ", "АИ-80", "AdBlue", "Электро"];
   const AGE_TEXT = [null, "до 30 мин назад", "30–60 мин назад", "1–2 ч назад", "2–6 ч назад", "6–12 ч назад",
     "12–24 ч назад", "больше суток"];
+  // Цвета топлива — палитра макета приложения (красный, оранжевый, жёлтый, зелёный, голубой, тёмный).
+  const FUEL_LOOK = {
+    "АИ-92": ["linear-gradient(135deg, #e4032a, #f55f01)"], "АИ-95": ["linear-gradient(135deg, #f14a0b, #ff9a1f)"],
+    "АИ-98": ["linear-gradient(135deg, #f6d007, #ffe45c)", "#3b3000"], "АИ-100": ["linear-gradient(135deg, #313534, #4a5356)"],
+    "ДТ": ["linear-gradient(135deg, #15b355, #25a887)"], "ДТ Арктика": ["linear-gradient(135deg, #33c4f0, #41cefb)"],
+    "Газ": ["linear-gradient(135deg, #2b9fd6, #41cefb)"], "Метан": ["linear-gradient(135deg, #f6d007, #ffe45c)", "#3b3000"],
+    "СПГ": ["linear-gradient(135deg, #2b9fd6, #41cefb)"], "АИ-80": ["linear-gradient(135deg, #313534, #4a5356)"],
+    "AdBlue": ["linear-gradient(135deg, #2b7db8, #4aa3e0)"], "Электро": ["linear-gradient(135deg, #15b355, #25a887)"],
+  };
+  const TANEKO = new Set(["АИ-92", "АИ-95", "АИ-98", "ДТ"]);
+  const DEFAULT_FUELS = ["АИ-92", "АИ-95"];
+  const FUELS_KEY = "azs_fuels";
   const STALE_MIN = 15;                               // сводка старше — «данные устарели»
   const DATA = { stations: [], fuels: [], at: Date.now(), demo: true };
   const tg = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null;
   const KAZAN = [55.79, 49.12];
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const look = (f) => { const [bg, fg] = FUEL_LOOK[f] || ["#56625f"]; return `--fc:${bg};--ft:${fg || "#fff"}`; };
 
-  let chosen = ["АИ-92", "АИ-95"];                   // по умолчанию; после загрузки — только те, что есть в сети
+  let chosen = savedFuels() || [...DEFAULT_FUELS];    // после загрузки — только те, что есть в сети
+  let draft = [];                                     // выбор на экране «Топливо» до «Применить»
   let me = null, map = null, cluster = null, mePin = null, picked = null;
 
   // ------------------------------------------------------------ Telegram
@@ -154,6 +270,17 @@
     tg.ready();
     tg.expand();
     document.documentElement.dataset.theme = tg.colorScheme === "dark" ? "dark" : "light";
+  }
+
+  function savedFuels() {
+    try {
+      const v = JSON.parse(localStorage.getItem(FUELS_KEY) || "null");
+      return Array.isArray(v) && v.length ? v.filter((f) => FUELS.includes(f)) : null;
+    } catch (e) { return null; }
+  }
+
+  function saveFuels() {
+    try { localStorage.setItem(FUELS_KEY, JSON.stringify(chosen)); } catch (e) { /* не запомнится — не страшно */ }
   }
 
   // ------------------------------------------------------------ данные: stations.json + сводка из ссылки
@@ -237,6 +364,7 @@
     });
     DATA.fuels = FUELS.filter((f) => DATA.stations.some((s) => s.codes[f] > 0));
     chosen = chosen.filter((f) => DATA.fuels.includes(f));
+    if (!chosen.length) chosen = DEFAULT_FUELS.filter((f) => DATA.fuels.includes(f));
     if (!chosen.length && DATA.fuels.length) chosen = [DATA.fuels[0]];
   }
 
@@ -277,8 +405,8 @@
   const isStale = () => !DATA.demo && Date.now() - DATA.at > STALE_MIN * 60000;
 
   function renderMeta() {
-    $("meta").innerHTML = `данные на ${hhmm(new Date(DATA.at))}`
-      + (DATA.demo ? '<span class="demo">демо</span>' : isStale() ? '<span class="demo demo--stale">устарели</span>' : "");
+    $("meta").innerHTML = `Данные на ${hhmm(new Date(DATA.at))}`
+      + (DATA.demo ? '<span class="badge">демо</span>' : isStale() ? '<span class="badge badge--stale">устарели</span>' : "");
     renderFresh();
   }
 
@@ -300,32 +428,80 @@
 
   function renderTop() {
     renderMeta();
-    $("chips").replaceChildren(...DATA.fuels.map((f) => {
+    // выбранное топливо — зелёные метки в строке; крестик убирает (одно топливо остаётся всегда)
+    const solo = chosen.length === 1;
+    $("chips").replaceChildren(...chosen.map((f) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "chip" + (chosen.includes(f) ? " is-on" : "");
-      b.textContent = f;
-      b.setAttribute("aria-pressed", String(chosen.includes(f)));
+      b.className = "tag" + (solo ? " tag--solo" : "");
+      b.innerHTML = esc(f) + (solo ? "" : '<span aria-hidden="true">×</span>');
+      b.setAttribute("aria-label", solo ? `${f} — выбрать топливо` : `Убрать ${f}`);
       b.onclick = () => {
-        chosen = chosen.includes(f) ? chosen.filter((x) => x !== f) : [...chosen, f];
-        if (!chosen.length) chosen = [f];                   // хотя бы одно топливо
+        if (solo) return openFilter();
+        chosen = chosen.filter((x) => x !== f);
+        saveFuels();
         if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
         renderTop();
-        const again = [...$("chips").children].find((x) => x.textContent === f);
-        if (again) again.scrollIntoView({ inline: "nearest", block: "nearest" });   // нажатая кнопка — на виду
         draw();
       };
       return b;
     }));
   }
 
+  // ------------------------------------------------------------ экран «Топливо»
+  function openFilter() {
+    draft = [...chosen];
+    renderTiles();
+    $("filter").hidden = false;
+  }
+
+  function closeFilter() {
+    $("filter").hidden = true;
+  }
+
+  function renderTiles() {
+    $("tiles").replaceChildren(...DATA.fuels.map((f) => {
+      const b = document.createElement("button");
+      const on = draft.includes(f);
+      b.type = "button";
+      b.className = "tile" + (on ? " is-on" : "");
+      b.style.cssText = look(f);
+      b.setAttribute("aria-pressed", String(on));
+      b.innerHTML = `<b>${esc(f)}</b>${TANEKO.has(f) ? "<small>и Танеко</small>" : ""}`;
+      b.onclick = () => {
+        draft = draft.includes(f) ? draft.filter((x) => x !== f) : [...draft, f];
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        renderTiles();
+      };
+      return b;
+    }));
+    $("filter-apply").disabled = !draft.length;
+    $("filter-apply").textContent = draft.length ? "Применить" : "Выберите топливо";
+  }
+
+  function applyFilter() {
+    if (!draft.length) return;
+    chosen = FUELS.filter((f) => draft.includes(f));
+    saveFuels();
+    closeFilter();
+    renderTop();
+    draw();
+  }
+
+  function resetFilter() {
+    draft = DEFAULT_FUELS.filter((f) => DATA.fuels.includes(f));
+    renderTiles();
+  }
+
   // ------------------------------------------------------------ карта
   const layouts = {};
+  const FLAME = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.6 2.5c.4 3.1 4.9 5.6 4.9 10.6a5.5 5.5 0 0 1-11 0c0-2.4 1.3-4.1 2.6-5.3-.1 2 .8 3.3 2 3.4-.4-3.3.6-6.1 1.5-8.7z"/></svg>';
   function pinLayout(k, best) {
     const key = k + (best ? "+" : "");
     if (!layouts[key]) {
-      layouts[key] = ymaps.templateLayoutFactory.createClass(
-        `<div class="pin pin--${k}${best ? " pin--best" : ""}"><span class="pin__dot"></span>№$[properties.num]</div>`);
+      const html = k === "ok" ? `<div class="pin pin--ok${best ? " pin--best" : ""}">${FLAME}№$[properties.num]</div>`
+        : k === "warn" ? '<div class="pin pin--warn"><i></i>№$[properties.num]</div>' : '<div class="dot"></div>';
+      layouts[key] = ymaps.templateLayoutFactory.createClass(html);
     }
     return layouts[key];
   }
@@ -336,16 +512,29 @@
     cluster.removeAll();
     cluster.add(DATA.stations.map((s) => {
       const k = stateOf(s);
+      const isBest = best && best.s === s;
       const m = new ymaps.Placemark([s.lat, s.lon], { num: s.num }, {
-        iconLayout: pinLayout(k, best && best.s === s),
-        iconShape: { type: "Rectangle", coordinates: [[-36, -34], [36, 0]] },
-        zIndex: k === "ok" ? 300 : k === "warn" ? 200 : 100,
+        iconLayout: pinLayout(k, isBest),
+        iconShape: k === "off" ? { type: "Circle", coordinates: [0, 0], radius: 10 }
+          : { type: "Rectangle", coordinates: [[-36, -16], [36, 16]] },
+        zIndex: isBest ? 400 : k === "ok" ? 300 : k === "warn" ? 200 : 100,
       });
       m.events.add("click", (e) => { e.stopPropagation(); openCard(s); });
       return m;
     }));
     if (picked) openCard(picked);
-    else if (best) openCard(best.s, true);
+    else renderNear(best);
+  }
+
+  function renderNear(best) {
+    // тёмная карточка «Ближайшая АЗС» — пока не открыта карточка конкретной АЗС
+    const show = !!best && !picked;
+    $("near").hidden = !show;
+    if (!show) return;
+    const ok = chosen.filter((f) => fuelState(best.s, f) === "ok").join(", ");
+    $("near-sub").textContent = `№${best.s.num} · ${shortAddr(best.s.address)}${ok ? ` · ${ok} до 30 мин` : ""}`;
+    $("near-km").textContent = `~${kmText(best.d)}`;
+    $("near").onclick = () => openCard(best.s, true);
   }
 
   function setMe(coords) {
@@ -356,13 +545,13 @@
       iconShape: { type: "Circle", coordinates: [0, 0], radius: 12 }, zIndex: 1000 });
     map.geoObjects.add(mePin);
     draw();
-    // в кадре — вы и ближайшая АЗС с заправками (сверху — панель топлива, снизу — карточка)
+    // в кадре — вы и ближайшая АЗС с заправками (сверху — строка топлива, снизу — карточка)
     const best = nearestOk();
     if (best) {
       const b = [[Math.min(me[0], best.s.lat), Math.min(me[1], best.s.lon)],
                  [Math.max(me[0], best.s.lat), Math.max(me[1], best.s.lon)]];
-      const bottom = ($("sheet").offsetHeight || 0) + 60;
-      map.setBounds(b, { checkZoomRange: true, zoomMargin: [150, 50, bottom, 50], duration: 300 })
+      const bottom = ($("near").offsetHeight || 0) + 70;
+      map.setBounds(b, { checkZoomRange: true, zoomMargin: [150, 70, bottom, 70], duration: 300 })
         .then(() => { if (map.getZoom() > 15) map.setZoom(15); });
     } else {
       map.setCenter(me, 13, { duration: 300 });
@@ -376,7 +565,7 @@
     const at = new URLSearchParams(location.search).get("at");
     const m = at && at.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
     if (m) return done(Number(m[1]), Number(m[2]));
-    const fail = () => note("Геопозиция не разрешена — показываю Казань. Разрешите доступ и нажмите ◎ внизу справа.");
+    const fail = () => note("Геопозиция не разрешена — показываю Казань. Разрешите доступ и нажмите кнопку со стрелкой справа.");
     if (tg && tg.LocationManager) {
       tg.LocationManager.init(() => {
         if (!tg.LocationManager.isLocationAvailable) return browserGeo(done, fail);
@@ -402,38 +591,38 @@
   }
 
   // ------------------------------------------------------------ карточка АЗС и маршрут
-  function openCard(s, auto) {
-    picked = auto ? null : s;
+  function openCard(s, nearest) {
+    picked = s;
+    $("near").hidden = true;
     const d = me ? km(me, [s.lat, s.lon]) : null;
     const rows = chosen.map((f) => {
       const k = fuelState(s, f);
-      const text = agoText(s, f);
-      return `<div class="r"><i class="${k === "none" ? "off" : k}"></i><b>${esc(f)}</b><span>${esc(text)}</span></div>`;
+      return `<div class="r"><span class="fb" style="${look(f)}">${esc(f)}</span>`
+        + `<span class="r__st"><i class="${k === "none" ? "off" : k}"></i>${esc(agoText(s, f))}</span></div>`;
     }).join("");
     $("card").innerHTML = `
       <div class="card__head">
-        <div>${auto ? '<div class="card__kicker">Ближайшая с заправками</div>' : ""}
+        <div>${nearest ? '<div class="card__kicker">Ближайшая с заправками</div>' : ""}
           <div class="card__num">АЗС №${esc(s.num)}</div>
           <div class="card__addr">${esc(shortAddr(s.address))}</div></div>
-        ${d !== null ? `<div class="card__dist">${kmText(d)}<small>по прямой</small></div>` : ""}
+        ${d !== null ? `<div class="card__km">${kmText(d)}</div>` : ""}
         <button class="card__close" type="button" aria-label="Закрыть">✕</button>
       </div>
       <div class="rows">${rows}</div>
-      <div class="actions" id="go">
+      <div id="go">
         <button class="btn btn--main" type="button" id="go-route">Проложить маршрут</button>
       </div>
       <p class="hint">Только онлайн-заправки через приложение — оплату на кассе не видно.</p>`;
     $("card").querySelector(".card__close").onclick = closeCard;
     $("go-route").onclick = () => showNavs(s);
     $("sheet").classList.add("is-open");
-    requestAnimationFrame(() => document.documentElement.style.setProperty("--sheet", $("sheet").offsetHeight + "px"));
-    if (!auto && map) map.panTo([s.lat, s.lon], { duration: 250 });
+    if (map) map.panTo([s.lat, s.lon], { duration: 250 });
   }
 
   function closeCard() {
     picked = null;
     $("sheet").classList.remove("is-open");
-    document.documentElement.style.setProperty("--sheet", "0px");
+    renderNear(nearestOk());
   }
 
   function shortAddr(addr) {
@@ -471,9 +660,8 @@
     const box = $("go");
     box.className = "navs";
     box.innerHTML = '<div class="navs__title">Чем проложить маршрут?</div>' + list.map(([app, name]) =>
-      `<button class="btn${app === last ? " btn--main" : ""}" type="button" data-app="${app}">${esc(name)}</button>`).join("");
+      `<button class="btn${app === last ? " is-last" : ""}" type="button" data-app="${app}">${esc(name)}</button>`).join("");
     box.querySelectorAll("[data-app]").forEach((b) => { b.onclick = () => route(s, b.dataset.app); });
-    requestAnimationFrame(() => document.documentElement.style.setProperty("--sheet", $("sheet").offsetHeight + "px"));
   }
 
   function route(s, app) {
@@ -488,13 +676,19 @@
   // ------------------------------------------------------------ старт
   $("locate").onclick = locate;
   $("fresh-btn").onclick = refreshFromBot;
+  $("filter-open").onclick = openFilter;
+  $("filter-close").onclick = closeFilter;
+  $("filter-apply").onclick = applyFilter;
+  $("filter-reset").onclick = resetFilter;
+  $("zoom-in").onclick = () => map && map.setZoom(map.getZoom() + 1, { duration: 200 });
+  $("zoom-out").onclick = () => map && map.setZoom(map.getZoom() - 1, { duration: 200 });
   setInterval(renderMeta, 60000);                     // открытая надолго карта сама покажет «устарели»
   if (!window.ymaps) { note("Карта не загрузилась — нет связи с Яндекс.Картами"); return; }
   loadData().catch(() => note("Список АЗС не загрузился — обновите страницу")).then(() => renderTop()).then(() => ymaps.ready(() => {
     map = new ymaps.Map("map", { center: KAZAN, zoom: 11, controls: [] }, { suppressMapOpenBlock: true });
-    map.controls.add("zoomControl", { position: { right: 12, top: 130 }, size: "small" });
-    cluster = new ymaps.Clusterer({ preset: "islands#invertedDarkGreenClusterIcons", groupByCoordinates: false,
-      gridSize: 56, hasBalloon: false });
+    cluster = new ymaps.Clusterer({ groupByCoordinates: false, gridSize: 56, hasBalloon: false,
+      clusterIconLayout: ymaps.templateLayoutFactory.createClass('<div class="cl">{{ properties.geoObjects.length }}</div>'),
+      clusterIconShape: { type: "Circle", coordinates: [0, 0], radius: 20 } });
     map.geoObjects.add(cluster);
     map.events.add("click", closeCard);
     draw();
