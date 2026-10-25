@@ -622,7 +622,7 @@
     $("near").onclick = () => openCard(best.s, true);
   }
 
-  function setMe(coords) {
+  function setMe(coords, manual) {
     me = coords;
     if (mePin) map.geoObjects.remove(mePin);
     mePin = new ymaps.Placemark(me, {}, {
@@ -630,7 +630,12 @@
       iconShape: { type: "Circle", coordinates: [0, 0], radius: 12 }, zIndex: 1000 });
     map.geoObjects.add(mePin);
     draw();
-    // в кадре — вы и ближайшая АЗС с заправками (сверху — строка топлива, снизу — карточка)
+    // кнопка «где я» — карта к вам, как в обычных картах
+    if (manual) {
+      map.setCenter(me, Math.max(map.getZoom(), 15), { duration: 350 });
+      return;
+    }
+    // при открытии — в кадре вы и ближайшая АЗС с заправками (сверху — строка топлива, снизу — карточка)
     const best = nearestOk();
     if (best) {
       const b = [[Math.min(me[0], best.s.lat), Math.min(me[1], best.s.lon)],
@@ -644,18 +649,25 @@
   }
 
   // ------------------------------------------------------------ геопозиция
-  function locate() {
-    const done = (lat, lon) => setMe([lat, lon]);
+  function locate(manual) {
+    manual = manual === true;
+    // по кнопке сразу едем к уже известному месту, потом уточняем свежей геопозицией
+    if (manual && me && map) map.setCenter(me, Math.max(map.getZoom(), 15), { duration: 350 });
+    const done = (lat, lon) => setMe([lat, lon], manual);
     // для показа с компьютера: ?at=55.79,49.12 — место вручную вместо геопозиции
     const at = new URLSearchParams(location.search).get("at");
     const m = at && at.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
     if (m) return done(Number(m[1]), Number(m[2]));
-    const fail = () => note("Геопозиция не разрешена — показываю Казань. Разрешите доступ и нажмите кнопку со стрелкой справа.");
+    const fail = () => note(me ? "Не удалось обновить геопозицию — показываю последнее известное место."
+      : "Геопозиция не разрешена — показываю Казань. Разрешите доступ и нажмите кнопку со стрелкой справа.");
     if (tg && tg.LocationManager) {
-      tg.LocationManager.init(() => {
-        if (!tg.LocationManager.isLocationAvailable) return browserGeo(done, fail);
-        tg.LocationManager.getLocation((loc) => (loc ? done(loc.latitude, loc.longitude) : fail()));
-      });
+      const lm = tg.LocationManager;
+      const ask = () => {
+        if (!lm.isLocationAvailable) return browserGeo(done, fail);
+        lm.getLocation((loc) => (loc ? done(loc.latitude, loc.longitude) : fail()));
+      };
+      // init — один раз: повторный init обработчик может не вызвать, и кнопка «где я» молчала бы
+      if (lm.isInited) ask(); else lm.init(ask);
       return;
     }
     browserGeo(done, fail);
@@ -761,7 +773,7 @@
   }
 
   // ------------------------------------------------------------ старт
-  $("locate").onclick = locate;
+  $("locate").onclick = () => locate(true);
   $("theme").onclick = cycleTheme;
   $("fresh-btn").onclick = refreshFromBot;
   $("filter-open").onclick = openFilter;
