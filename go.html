@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- Мостик к Яндекс Навигатору: из Telegram открываются только https-ссылки, поэтому карта (index.html) открывает
+     эту страницу в браузере, а она передаёт маршрут приложению. Android — intent (нет Навигатора — Яндекс.Карты),
+     iPhone — yandexnavi://. Адрес: go.html?lat=<широта>&lon=<долгота>. -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Маршрут в Яндекс Навигаторе</title>
+<style>
+  :root { --bg: #ffffff; --text: #16201b; --text-3: #7d8984; --chip: #f1f4f2; --accent: #12865a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #17191c; --text: #eef2f0; --text-3: #8b9590; --chip: #262a2e; } }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 360px; margin: 0 auto; padding: 48px 16px; text-align: center; }
+  h1 { font-size: 19px; margin: 0 0 8px; }
+  p { color: var(--text-3); margin: 0 0 22px; font-size: 14.5px; }
+  a { display: block; padding: 13px; border-radius: 12px; margin-top: 10px; font-weight: 700; text-decoration: none;
+    background: var(--chip); color: var(--text); }
+  a.main { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Открываю Яндекс Навигатор…</h1>
+  <p id="text">Маршрут до АЗС построится в приложении.</p>
+  <a class="main" id="navi" href="#">Открыть Навигатор</a>
+  <a id="maps" href="#">Маршрут в Яндекс Картах</a>
+</main>
+<script>
+(() => {
+  "use strict";
+  const p = new URLSearchParams(location.search);
+  const lat = Number(p.get("lat")), lon = Number(p.get("lon"));
+  const $ = (id) => document.getElementById(id);
+  if (!p.get("lat") || !p.get("lon") || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    $("title").textContent = "Нет координат АЗС";
+    $("text").textContent = "Вернитесь в Telegram и выберите АЗС на карте ещё раз.";
+    $("navi").remove();
+    $("maps").remove();
+    return;
+  }
+  const maps = `https://yandex.ru/maps/?rtext=~${lat},${lon}&rtt=auto`;
+  const android = /Android/i.test(navigator.userAgent);
+  const navi = android
+    ? `intent://build_route_on_map?lat_to=${lat}&lon_to=${lon}#Intent;scheme=yandexnavi;package=ru.yandex.yandexnavi;`
+      + `S.browser_fallback_url=${encodeURIComponent(maps)};end`
+    : `yandexnavi://build_route_on_map?lat_to=${lat}&lon_to=${lon}`;
+  $("navi").href = navi;
+  $("maps").href = maps;
+  location.href = navi;
+  setTimeout(() => {
+    if (document.visibilityState !== "visible") return;
+    $("title").textContent = "Навигатор не открылся?";
+    $("text").textContent = "Нажмите «Открыть Навигатор». Если его нет на телефоне — постройте маршрут в Яндекс Картах.";
+  }, 1800);
+})();
+</script>
+</body>
+</html>
