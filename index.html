@@ -256,7 +256,7 @@
       <div><i class="warn"></i>Давно, но меньше суток — время в карточке АЗС</div>
       <div><i class="off"></i>Больше суток или этого топлива нет на колонках</div>
     </div>
-    <p class="filter__ver">Версия страницы: 25.10.2026 · 3</p>
+    <p class="filter__ver" id="ver">Версия страницы: 25.10.2026 · 4</p>
   </div>
   <div class="filter__actions">
     <button class="btn btn--main" id="filter-apply" type="button">Применить</button>
@@ -413,32 +413,53 @@
     if (cs && text.length <= 4096) { try { cs.setItem(SAVE_KEY, text); } catch (e) { /* не страшно */ } }
   }
 
+  // Фоновое обновление: бот раз в 5 минут кладёт ту же сводку, зашифрованную, в секретный gist на GitHub; в ссылке —
+  // где он (g = владелец/id) и ключ (k). Ключ на GitHub не попадает: без ссылки файл — набор байтов.
+  const GIST_RE = /^[A-Za-z0-9-]{1,39}\/[0-9a-f]{20,40}$/;
+  const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+  const POLL_SEC = 60;
+  let ROWS = [];
+
   async function loadData() {
-    const rows = await (await fetch("stations.json", { cache: "no-cache" })).json();
+    ROWS = await (await fetch("stations.json", { cache: "no-cache" })).json();
     const p = new URLSearchParams(location.hash.slice(1));
     const link = p.get("v") === "1" && p.get("d")
-      ? { t: Number(p.get("t")) || 0, d: p.get("d"), n: Number(p.get("n")) || 0, b: p.get("b") || "" } : null;
+      ? { t: Number(p.get("t")) || 0, d: p.get("d"), n: Number(p.get("n")) || 0, b: p.get("b") || "",
+          g: p.get("g") || "", k: p.get("k") || "" } : null;
     const saved = [readLocal(), await readCloud()].filter((r) => r && typeof r.d === "string" && Number(r.t) > 0)
       .sort((a, b) => b.t - a.t)[0] || null;
     const rec = link && (!saved || link.t >= saved.t) ? link : saved;
     if (link && rec === link) remember(link);
-    const bot = (link && link.b) || (saved && saved.b) || "";
-    DATA.bot = BOT_RE.test(bot) ? bot : "";
+    const pick = (f) => (link && link[f]) || (saved && saved[f]) || "";
+    DATA.bot = BOT_RE.test(pick("b")) ? pick("b") : "";
+    DATA.gist = GIST_RE.test(pick("g")) && KEY_RE.test(pick("k")) ? { g: pick("g"), k: pick("k") } : null;
+    await applyRec(rec, true);
+    pickFuels();
+  }
+
+  async function applyRec(rec, first) {
+    // сводка -> коды давности по АЗС; первый раз строим список АЗС, дальше меняем только коды (карточка не сбивается)
     let bytes = null;
     if (rec) {
-      if (rec.n && rec.n !== rows.length) {
+      if (rec.n && rec.n !== ROWS.length) {
         // список АЗС у бота и у страницы разный — данные легли бы не на те АЗС: лучше честное демо
-        note("Список АЗС обновился — данные недоступны, пока страницу не обновят. Показываю демо.");
+        if (first) note("Список АЗС обновился — данные недоступны, пока страницу не обновят. Показываю демо.");
       } else {
         try { bytes = await inflate(rec.d); } catch (e) { bytes = null; }
       }
     }
+    if (!first && !bytes) return false;
     DATA.demo = !bytes;
     DATA.at = bytes && rec.t ? rec.t * 1000 : Date.now();
-    DATA.stations = rows.map(([num, lat, lon, address, region], i) => {
-      const codes = bytes ? FUELS.map((_, j) => code(bytes, i * FUELS.length + j)) : demoCodes(num);
-      return { num, lat, lon, address, region, codes: Object.fromEntries(FUELS.map((f, j) => [f, codes[j]])) };
-    });
+    const codesOf = (num, i) => {
+      const c = bytes ? FUELS.map((_, j) => code(bytes, i * FUELS.length + j)) : demoCodes(num);
+      return Object.fromEntries(FUELS.map((f, j) => [f, c[j]]));
+    };
+    if (!first) {
+      DATA.stations.forEach((s, i) => { s.codes = codesOf(s.num, i); });
+      return true;
+    }
+    DATA.stations = ROWS.map(([num, lat, lon, address, region], i) => ({ num, lat, lon, address, region, codes: codesOf(num, i) }));
     // у нескольких АЗС координаты могут совпасть (приблизительные — по центру города): раздвигаем по кругу ~40 м,
     // иначе значки лягут друг на друга и карта сольёт их в кружок «2»
     const seen = {};
@@ -450,10 +471,63 @@
         s.lon += 0.00036 * Math.cos(a) / Math.cos(s.lat * Math.PI / 180);
       }
     });
+    return true;
+  }
+
+  function pickFuels() {
     DATA.fuels = FUELS.filter((f) => DATA.stations.some((s) => s.codes[f] > 0));
     chosen = chosen.filter((f) => DATA.fuels.includes(f));
     if (!chosen.length) chosen = DEFAULT_FUELS.filter((f) => DATA.fuels.includes(f));
     if (!chosen.length && DATA.fuels.length) chosen = [DATA.fuels[0]];
+  }
+
+  // расшифровка — как seal() в azsbot.py: поток HMAC-SHA256(ke, nonce || номер блока), подпись HMAC(km, nonce || шифртекст)
+  const b64u = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)),
+    (c) => c.charCodeAt(0));
+  const join = (a, b) => { const o = new Uint8Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+  const hmacKey = (raw) => crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sign = async (key, data) => new Uint8Array(await crypto.subtle.sign("HMAC", key, data));
+
+  async function unseal(k64, box) {
+    const root = await hmacKey(b64u(k64)), te = new TextEncoder();
+    const ke = await hmacKey(await sign(root, te.encode("enc"))), km = await hmacKey(await sign(root, te.encode("mac")));
+    const nonce = b64u(box.n), ct = b64u(box.c), tag = b64u(box.m);
+    const want = await sign(km, join(nonce, ct));
+    if (want.length !== tag.length || want.some((x, i) => x !== tag[i])) throw new Error("подпись не сошлась");
+    const out = new Uint8Array(ct.length);
+    for (let i = 0; i * 32 < ct.length; i++) {
+      const ctr = new Uint8Array(4);
+      new DataView(ctr.buffer).setUint32(0, i);
+      const block = await sign(ke, join(nonce, ctr));
+      for (let j = 0; j < 32 && i * 32 + j < ct.length; j++) out[i * 32 + j] = ct[i * 32 + j] ^ block[j];
+    }
+    return new TextDecoder().decode(out);
+  }
+
+  let polling = false;
+  async function pollGist() {
+    // свежая сводка из gist; новее показанной — перерисовать на месте. Нет сети или GitHub — молча, через минуту ещё раз
+    if (!DATA.gist || polling || document.hidden) return false;
+    polling = true;
+    try {
+      const r = await fetch(`https://gist.githubusercontent.com/${DATA.gist.g}/raw/azs.json?t=${Date.now()}`, { cache: "no-store" });
+      if (!r.ok) return false;
+      const box = await r.json();
+      if (!box || box.v !== 1) return false;
+      const p = new URLSearchParams(await unseal(DATA.gist.k, box));
+      const rec = { t: Number(p.get("t")) || 0, d: p.get("d") || "", n: Number(p.get("n")) || 0, b: DATA.bot, ...DATA.gist };
+      if (!rec.d || (!DATA.demo && rec.t * 1000 <= DATA.at)) return false;
+      if (!(await applyRec(rec, false))) return false;
+      remember(rec);
+      pickFuels();
+      renderTop();
+      draw(true);
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      polling = false;
+    }
   }
 
   function fuelState(s, f) {
@@ -505,11 +579,13 @@
     if (!show) return;
     const what = DATA.demo ? "Свежих данных нет." : `Данные на ${hhmm(new Date(DATA.at))} — устарели.`;
     $("fresh-text").textContent = DATA.bot ? `${what} Свежие — из чата бота.` : `${what} Откройте карту из чата бота.`;
-    $("fresh-btn").hidden = !DATA.bot;
+    $("fresh-btn").hidden = !DATA.bot && !DATA.gist;
   }
 
-  function refreshFromBot() {
-    // в чате бот сразу присылает кнопку «Открыть карту» со свежей сводкой (/start map)
+  async function refreshFromBot() {
+    // сначала — тихо из gist; не вышло — чат бота: он сразу присылает кнопку «Открыть карту» со свежей сводкой
+    if (DATA.gist && (await pollGist())) return toast("Данные обновлены");
+    if (!DATA.bot) return;
     tg.openTelegramLink(`https://t.me/${DATA.bot}?start=map`);
     setTimeout(() => tg.close(), 400);
   }
@@ -595,7 +671,7 @@
     return layouts[key];
   }
 
-  function draw() {
+  function draw(soft) {                               // soft — фоновое обновление: открытую карточку не пересобираем
     if (!map) return;
     const best = nearestOk();
     cluster.removeAll();
@@ -610,7 +686,7 @@
       m.events.add("click", (e) => { e.stopPropagation(); openCard(s); });
       return m;
     }));
-    if (picked) openCard(picked);
+    if (picked) { if (!soft) openCard(picked); }
     else renderNear(best);
   }
 
@@ -816,6 +892,10 @@
     map.events.add("click", closeCard);
     draw();
     locate();
+    // фоновое обновление: сразу (ссылка могла быть старее файла), раз в минуту и при возвращении в карту
+    pollGist();
+    setInterval(pollGist, POLL_SEC * 1000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGist(); });
   }));
 })();
 </script>
