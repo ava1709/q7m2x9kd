@@ -92,9 +92,11 @@
   .mk--off .mk__num { font-size: 11px; padding: 0 5px; background: #fff; border-color: #dfe6ee; }
   .mk--best .pin { box-shadow: 0 0 0 2px var(--ring), 0 0 0 5px var(--halo), 0 1px 6px rgba(0, 0, 0, .14); }
   .mk--best .mk__num { margin-top: 8px; }
-  .cl { transform: translate(-50%, -50%); display: grid; place-items: center; min-width: 36px; height: 36px;
-    padding: 0 8px; border-radius: 18px; background: #fff; color: var(--brand); border: 2px solid var(--brand);
-    font: 700 13px/1 var(--font); box-shadow: 0 2px 8px rgba(20, 40, 40, .22); }
+  /* группа АЗС: кольцо долями по составу — зелёная (≤ 30 мин), жёлтая (до суток), серая (нет) — ставит clusterLayout */
+  .cl { transform: translate(-50%, -50%); width: 38px; height: 38px; padding: 3px; border-radius: 50%;
+    background: var(--ring, var(--brand)); box-shadow: 0 2px 8px rgba(20, 40, 40, .22); }
+  .cl span { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; background: #fff;
+    color: var(--text-c, var(--brand)); font: 700 13px/1 var(--font); }
   .me { transform: translate(-50%, -50%); width: 56px; height: 56px; border-radius: 50%;
     background: rgba(254, 32, 85, .13); display: grid; place-items: center; }
   .me::after { content: ""; width: 16px; height: 16px; border-radius: 50%; background: var(--me); border: 3px solid #fff;
@@ -257,7 +259,7 @@
       <div><i class="warn"></i>Давно, но меньше суток — время в карточке АЗС</div>
       <div><i class="off"></i>Больше суток или этого топлива нет на колонках</div>
     </div>
-    <p class="filter__ver" id="ver">Версия страницы: 25.10.2026 · 5</p>
+    <p class="filter__ver" id="ver">Версия страницы: 25.10.2026 · 6</p>
   </div>
   <div class="filter__actions">
     <button class="btn btn--main" id="filter-apply" type="button">Применить</button>
@@ -672,6 +674,34 @@
     return layouts[key];
   }
 
+  const RING = { ok: "#23aa89", warn: "#e8b800", off: "#c1c6d9" };
+  const RING_TEXT = { ok: "#23aa89", warn: "#8a6d00", off: "#646a7a" };
+
+  function clusterLayout() {
+    // кольцо группы долями: все жёлтые — жёлтое, одна зелёная и одна жёлтая — пополам; цифра — цветом большинства
+    const Layout = ymaps.templateLayoutFactory.createClass('<div class="cl"><span>{{ properties.geoObjects.length }}</span></div>', {
+      build() {
+        Layout.superclass.build.call(this);
+        const n = { ok: 0, warn: 0, off: 0 };
+        (this.getData().properties.get("geoObjects") || []).forEach((o) => { n[o.properties.get("k")] += 1; });
+        const total = n.ok + n.warn + n.off || 1;
+        let at = 0;
+        const parts = ["ok", "warn", "off"].filter((k) => n[k]).map((k) => {
+          const from = at;
+          at += (n[k] / total) * 360;
+          return `${RING[k]} ${from}deg ${at}deg`;
+        });
+        const main = ["ok", "warn", "off"].reduce((a, b) => (n[b] > n[a] ? b : a), "ok");
+        const el = this.getParentElement().querySelector(".cl");
+        if (el) {
+          el.style.setProperty("--ring", parts.length > 1 ? `conic-gradient(${parts.join(", ")})` : RING[main]);
+          el.style.setProperty("--text-c", RING_TEXT[main]);
+        }
+      },
+    });
+    return Layout;
+  }
+
   function draw(soft) {                               // soft — фоновое обновление: открытую карточку не пересобираем
     if (!map) return;
     const best = nearestOk();
@@ -679,7 +709,7 @@
     cluster.add(DATA.stations.map((s) => {
       const k = stateOf(s);
       const isBest = best && best.s === s;
-      const m = new ymaps.Placemark([s.lat, s.lon], { num: s.num }, {
+      const m = new ymaps.Placemark([s.lat, s.lon], { num: s.num, k }, {
         iconLayout: pinLayout(k, isBest),
         iconShape: { type: "Rectangle", coordinates: k === "off" ? [[-22, -14], [22, 34]] : isBest ? [[-32, -24], [32, 58]] : [[-28, -19], [28, 50]] },
         zIndex: isBest ? 400 : k === "ok" ? 300 : k === "warn" ? 200 : 100,
@@ -933,7 +963,7 @@
     map = new ymaps.Map("map", { center: KAZAN, zoom: 11, controls: [] }, { suppressMapOpenBlock: true });
     // ближе 13-го масштаба — каждая АЗС своим значком с номером (иначе соседние сливаются в кружок «2»)
     cluster = new ymaps.Clusterer({ groupByCoordinates: false, gridSize: 56, hasBalloon: false, maxZoom: 13,
-      clusterIconLayout: ymaps.templateLayoutFactory.createClass('<div class="cl">{{ properties.geoObjects.length }}</div>'),
+      clusterIconLayout: clusterLayout(),
       clusterIconShape: { type: "Circle", coordinates: [0, 0], radius: 20 } });
     map.geoObjects.add(cluster);
     map.events.add("click", closeCard);
