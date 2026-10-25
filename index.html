@@ -154,7 +154,6 @@
   .btn:disabled { opacity: .45; }
   .navs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .navs .btn { min-height: 46px; font-size: 15px; }
-  .navs .btn.is-last { box-shadow: inset 0 0 0 2px var(--brand); color: var(--brand); }
   .navs__title { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--text-3); }
   .navs [data-app="any"] { grid-column: 1 / -1; }
   .hint { color: var(--text-3); font-size: 12px; margin: 10px 2px 0; text-align: center; }
@@ -729,12 +728,11 @@
     return `https://yandex.ru/maps/?rtext=${me ? me.join(",") : ""}~${s.lat},${s.lon}&rtt=auto`;
   }
 
-  // «Проложить маршрут» → выбор приложения в постоянном порядке; выбранное в прошлый раз подсвечено.
+  // «Проложить маршрут» → выбор приложения: кнопки одинаковые, порядок постоянный.
   // Из Telegram открываются только https-ссылки: у Яндекс Карт, 2ГИС, Apple и Google их подхватывают приложения.
   // На Android первым — «Из установленных на телефоне»: go.html рядом со страницей открывает место ссылкой geo:,
   // и Android сам показывает окно «Открыть с помощью» только с теми приложениями, что стоят (точка, не маршрут).
   const NAVS = [["ymaps", "Яндекс Карты"], ["2gis", "2ГИС"], ["apple", "Apple Maps"], ["google", "Google Maps"]];
-  const NAV_KEY = "azs_nav";
   const ANDROID = /Android/i.test(navigator.userAgent) || (tg && tg.platform === "android");
 
   function navUrl(s, app) {
@@ -745,22 +743,16 @@
     return mapsUrl(s);
   }
 
-  function lastNav() {
-    try { return localStorage.getItem(NAV_KEY) || ""; } catch (e) { return ""; }
-  }
-
   function showNavs(s) {
-    const last = lastNav();
     const list = ANDROID ? [["any", "Из установленных на телефоне"], ...NAVS] : NAVS;
     const box = $("go");
     box.className = "navs";
     box.innerHTML = '<div class="navs__title">Чем проложить маршрут?</div>' + list.map(([app, name]) =>
-      `<button class="btn${app === last ? " is-last" : ""}" type="button" data-app="${app}">${esc(name)}</button>`).join("");
+      `<button class="btn" type="button" data-app="${app}">${esc(name)}</button>`).join("");
     box.querySelectorAll("[data-app]").forEach((b) => { b.onclick = () => route(s, b.dataset.app); });
   }
 
   function route(s, app) {
-    try { localStorage.setItem(NAV_KEY, app); } catch (e) { /* запомнить не вышло — не страшно */ }
     openLink(navUrl(s, app));
   }
 
