@@ -374,9 +374,15 @@
     return `https://yandex.ru/maps/?rtext=${me ? me.join(",") : ""}~${s.lat},${s.lon}&rtt=auto`;
   }
 
+  function pointUrl(s) {
+    return `https://yandex.ru/maps/?pt=${s.lon},${s.lat}&z=16&l=map`;
+  }
+
   function route(s, how) {
-    if (how === "maps") return openLink(mapsUrl(s));
-    // Навигатор: приложение по своей ссылке; не открылось за секунду — Яндекс.Карты с тем же маршрутом
+    if (how === "maps") return openLink(pointUrl(s));
+    // В Telegram ссылки yandexnavi:// не открываются (ERR_UNKNOWN_URL_SCHEME): маршрут — https-ссылкой Яндекс.Карт,
+    // её на телефоне подхватывает приложение Карт. В обычном браузере сначала пробуем Навигатор.
+    if (tg) return openLink(mapsUrl(s));
     window.location.href = `yandexnavi://build_route_on_map?lat_to=${s.lat}&lon_to=${s.lon}`;
     setTimeout(() => { if (document.visibilityState === "visible") openLink(mapsUrl(s)); }, 1200);
   }
