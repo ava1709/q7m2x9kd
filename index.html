@@ -13,7 +13,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&amp;apikey=47ec3f3e-8bd7-4c03-a385-fef0ee84bbbf"></script>
 <style>
   /* палитра и элементы — из UI-kit приложения («Элементы интерфейса» в Figma AZSv2) */
   :root {
@@ -196,6 +195,8 @@
     max-width: 640px; margin: 0 auto; display: flex; align-items: flex-start; gap: 10px; padding: 12px 10px 12px 16px;
     border-radius: 16px; background: var(--red); color: #fff; font-size: 15px; line-height: 1.35;
     box-shadow: 0 6px 20px rgba(226, 0, 63, .3); }
+  .note .note__act { width: auto; height: 28px; padding: 0 12px; border-radius: 999px; background: #fff; color: var(--red);
+    font-size: 13.5px; font-weight: 600; align-self: center; }
   .note button { flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .2);
     color: #fff; font-size: 15px; line-height: 1; display: grid; place-items: center; }
 </style>
@@ -256,7 +257,7 @@
       <div><i class="warn"></i>Давно, но меньше суток — время в карточке АЗС</div>
       <div><i class="off"></i>Больше суток или этого топлива нет на колонках</div>
     </div>
-    <p class="filter__ver" id="ver">Версия страницы: 25.10.2026 · 4</p>
+    <p class="filter__ver" id="ver">Версия страницы: 25.10.2026 · 5</p>
   </div>
   <div class="filter__actions">
     <button class="btn btn--main" id="filter-apply" type="button">Применить</button>
@@ -774,21 +775,31 @@
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
   }
 
-  function note(text) {
+  function note(text, action) {
+    // action = {label, fn} — кнопка в плашке; такая плашка сама не исчезает
     const n = document.createElement("div");
     n.className = "note";
     n.setAttribute("role", "alert");
     const t = document.createElement("span");
     t.style.flex = "1";
     t.textContent = text;
+    n.append(t);
+    if (action) {
+      const a = document.createElement("button");
+      a.type = "button";
+      a.className = "note__act";
+      a.textContent = action.label;
+      a.onclick = action.fn;
+      n.append(a);
+    }
     const x = document.createElement("button");
     x.type = "button";
     x.setAttribute("aria-label", "Закрыть");
     x.textContent = "✕";
     x.onclick = () => n.remove();
-    n.append(t, x);
+    n.append(x);
     document.body.append(n);
-    setTimeout(() => n.remove(), 6000);
+    if (!action) setTimeout(() => n.remove(), 6000);
   }
 
   // ------------------------------------------------------------ карточка АЗС и маршрут
@@ -881,8 +892,44 @@
   $("zoom-in").onclick = () => map && map.setZoom(map.getZoom() + 1, { duration: 200 });
   $("zoom-out").onclick = () => map && map.setZoom(map.getZoom() - 1, { duration: 200 });
   setInterval(renderMeta, 60000);                     // открытая надолго карта сама покажет «устарели»
-  if (!window.ymaps) { note("Карта не загрузилась — нет связи с Яндекс.Картами"); return; }
-  loadData().catch(() => note("Список АЗС не загрузился — обновите страницу")).then(() => renderTop()).then(() => ymaps.ready(() => {
+  // Яндекс.Карты грузим сами, с повторами: на медленной сети или с VPN первая попытка бывает неудачной.
+  // Данные и строка топлива не ждут карту.
+  const YMAPS_URL = "https://api-maps.yandex.ru/2.1/?lang=ru_RU&apikey=47ec3f3e-8bd7-4c03-a385-fef0ee84bbbf";
+  const YMAPS_TRIES = 3;
+  const YMAPS_WAIT_MS = 15000;
+
+  function loadScript(src) {
+    return new Promise((ok, fail) => {
+      const s = document.createElement("script");
+      const t = setTimeout(() => fail(new Error("timeout")), YMAPS_WAIT_MS);
+      s.src = src;
+      s.async = true;
+      s.onload = () => { clearTimeout(t); return window.ymaps ? ok() : fail(new Error("no ymaps")); };
+      s.onerror = () => { clearTimeout(t); s.remove(); fail(new Error("load")); };
+      document.head.append(s);
+    });
+  }
+
+  async function loadYmaps() {
+    for (let i = 1; i <= YMAPS_TRIES; i++) {
+      if (window.ymaps) return;
+      try {
+        await loadScript(i === 1 ? YMAPS_URL : `${YMAPS_URL}&_try=${i}`);
+        return;
+      } catch (e) {
+        if (window.ymaps) return;                         // поздно, но догрузился
+        if (i < YMAPS_TRIES) await new Promise((r) => setTimeout(r, 1500 * i));
+      }
+    }
+    throw new Error("Яндекс.Карты не загрузились");
+  }
+
+  const dataReady = loadData().catch(() => note("Список АЗС не загрузился — обновите страницу")).then(() => renderTop());
+  loadYmaps().then(() => dataReady).then(() => ymaps.ready(startMap)).catch(() => note(
+    "Карта не загрузилась: нет связи с Яндекс.Картами. Проверьте интернет; если на телефоне включён VPN — выключите его и нажмите «Повторить».",
+    { label: "Повторить", fn: () => location.reload() }));
+
+  function startMap() {
     map = new ymaps.Map("map", { center: KAZAN, zoom: 11, controls: [] }, { suppressMapOpenBlock: true });
     // ближе 13-го масштаба — каждая АЗС своим значком с номером (иначе соседние сливаются в кружок «2»)
     cluster = new ymaps.Clusterer({ groupByCoordinates: false, gridSize: 56, hasBalloon: false, maxZoom: 13,
@@ -896,7 +943,7 @@
     pollGist();
     setInterval(pollGist, POLL_SEC * 1000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGist(); });
-  }));
+  }
 })();
 </script>
 </body>
